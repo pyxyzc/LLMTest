@@ -668,7 +668,7 @@ def main():
 
     print("\nDetailed Results (per round):")
     print("-" * 100)
-    print(f"{'Round':>6} | {'Total In{'Succ/Total':>10} | {'Avg TTFT':>10} | {'Max TTFT':>10} | {'Throughput':>10} | {'Cache Hit':>10} | {'Cached/Prompt':>15}")
+    print(f"{'Round':>6} | {'Total In':>12} | {'Succ/Total':>10} | {'Avg TTFT':>10} | {'Max TTFT':>10} | {'Throughput':>10} | {'Cache Hit':>10} | {'Cached/Prompt':>15}")
     print("-" * 100)
     for r in results:
         print(f"{r.round_num:6d} | {r.total_input_tokens:12d} | {r.successful_requests:3d}/{r.batch_size:3d}    | "
