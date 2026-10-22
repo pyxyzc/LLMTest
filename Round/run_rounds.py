@@ -355,11 +355,13 @@ class SGLangBatchBenchmark:
         failed_count = len(failed)
 
         # 临时诊断：打印每请求 usage 原始值，用于区分「未拿到 usage」与「真的未命中」
+        print()
         for idx, r in results:
             if r.success:
-                print(f"\n[Diag Req {idx}] [User {idx}] prompt_tokens={r.prompt_tokens}, cached_tokens={r.cached_tokens}")
+                print(f"[Diag Req {idx}] [User {idx}] prompt_tokens={r.prompt_tokens}, cached_tokens={r.cached_tokens}")
             else:
-                print(f"\n[Diag Req {idx}] [User {idx}] FAILED: {r.error}")
+                print(f"[Diag Req {idx}] [User {idx}] FAILED: {r.error}")
+        print()
 
         # 优先使用每请求 usage 中的 cached_tokens（精确、按轮归属）：
         # 命中率 = Σcached / Σprompt。仅当服务端未开 --enable-cache-report 时
