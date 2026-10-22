@@ -1,0 +1,7 @@
+# 自动规范所有文本文件的换行符
+* text=auto
+
+# 强制指定某些文件类型在 Git 仓库中必须保存为 LF（去除 ^M）
+*.txt text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
