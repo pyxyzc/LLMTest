@@ -1,0 +1,11 @@
+python3 run_rounds.py \
+  --base-url http://localhost:8000 \
+  --model /home/models/GLM-5.2-W4AFP8/ \
+  --rounds 2 \
+  --batch-size 5 \
+  --initial-tokens 128 \
+  --increment-tokens 32 \
+  --output-len 16 \
+  --record-response \
+  --request-usage \
+  --conversation-dir "./quick_$(date +%Y%m%d_%H%M%S).log"
