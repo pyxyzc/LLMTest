@@ -133,7 +133,7 @@ class SGLangBatchBenchmark:
         # 精确截取指定 token 数并解码
 
         res = self._tokenizer.decode(self._corpus_tokens[start:start + token_len], skip_special_tokens=True)
-        print(f"[PROMPT] requested {token_len} tokens, text len: {len(res)}")
+        # print(f"[PROMPT] requested {token_len} tokens, text len: {len(res)}")
 
         return res
 
@@ -142,8 +142,7 @@ class SGLangBatchBenchmark:
             token_len = len(self._tokenizer.encode(text))
         else:
             token_len = len(text) // 4
-        has_tokenizer = True if self._tokenizer else False
-        print(f"[{kind}] {token_len} tokens ({'exact' if has_tokenizer else 'approx'})")
+        print(f"[{kind}] {token_len} tokens")
 
         return token_len
 
@@ -358,9 +357,9 @@ class SGLangBatchBenchmark:
         print()
         for idx, r in results:
             if r.success:
-                print(f"[Diag Req {idx}] [User {idx}] prompt_tokens={r.prompt_tokens}, cached_tokens={r.cached_tokens}")
+                print(f"[Req {idx}] [User {idx}] prompt_tokens={r.prompt_tokens}, cached_tokens={r.cached_tokens}")
             else:
-                print(f"[Diag Req {idx}] [User {idx}] FAILED: {r.error}")
+                print(f"[Req {idx}] [User {idx}] FAILED: {r.error}")
         print()
 
         # 优先使用每请求 usage 中的 cached_tokens（精确、按轮归属）：
@@ -450,6 +449,7 @@ class SGLangBatchBenchmark:
                 user_content = self._generate_dummy_text(initial_tokens, unique_id=idx)
                 fixed_user_contents.append("summarise the flowing text:" + user_content)
                 total_input_tokens_list[idx] += self.count_tokens(user_content, kind="INPUT")
+            print()
 
         for round_num in range(1, rounds + 1):
             # 为每个请求生成不同的 user message
@@ -466,6 +466,7 @@ class SGLangBatchBenchmark:
                     all_messages[idx].append({"role": "user", "content": user_content})
                     recorded_messages[idx].append({"role": "user", "content": user_content})
                     total_input_tokens_list[idx] += self.count_tokens(user_content, kind="INPUT")
+                print()
 
             batch_result, individual_results = self.run_batch_round(
                 messages_list=all_messages,
