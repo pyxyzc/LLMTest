@@ -219,7 +219,7 @@ class SGLangBatchBenchmark:
         try:
             # """
 
-            with self.session.post(url, json=payload, headers=headers, stream=True, timeout=300) as resp:
+            with self.session.post(url, json=payload, headers=headers, stream=True, timeout=3000) as resp:
                 if resp.status_code != 200:
                     error = f"HTTP {resp.status_code}: {resp.text[:200]}"
                     return SingleRequestResult(success=False, error=error)
