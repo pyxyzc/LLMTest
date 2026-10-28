@@ -418,20 +418,47 @@ class SGLangBatchBenchmark:
         output_length: int = 32,
         temperature: float = 0.0,
         wait_seconds: float = 10.0,
+        input_tokens: Optional[int] = None,
     ):
-        """独立短请求预热，不使用正式语料、随机数状态、对话历史或统计。"""
+        """独立请求预热，不使用正式语料、随机数状态、对话历史或统计。"""
         if rounds == 0:
             return
+        warmup_tokenizer = self._tokenizer
+        if input_tokens is not None:
+            if input_tokens < 1:
+                raise ValueError("预热输入 token 数必须 >= 1")
+            if warmup_tokenizer is None:
+                try:
+                    from transformers import AutoTokenizer
+                    warmup_tokenizer = AutoTokenizer.from_pretrained(self.model)
+                except Exception as exc:
+                    raise RuntimeError(f"无法加载预热 tokenizer，请用 --tokenizer 指定：{exc}") from exc
+            print(f"[Warmup] 每请求输入目标：{input_tokens} tokens（不含聊天模板）")
+
+        def make_messages():
+            content = (
+                f"{uuid.uuid4().hex}\n"
+                "This is an independent warmup request. Count from one to one hundred."
+            )
+            if input_tokens is not None:
+                token_ids = warmup_tokenizer.encode(content, add_special_tokens=False)
+                filler = warmup_tokenizer.encode(
+                    " The quick brown fox jumps over the lazy dog.", add_special_tokens=False
+                )
+                if not filler:
+                    raise RuntimeError("预热 tokenizer 未生成有效的填充 token")
+                remaining = max(0, input_tokens - len(token_ids))
+                token_ids += (filler * ((remaining + len(filler) - 1) // len(filler)))[:remaining]
+                content = warmup_tokenizer.decode(token_ids[:input_tokens], skip_special_tokens=True)
+            return [{"role": "user", "content": content}]
+
         print(f"\n[Warmup] 开始预热：{rounds} 轮，每轮 {batch_size} 个请求")
         for round_idx in range(1, rounds + 1):
             with ThreadPoolExecutor(max_workers=max_workers or batch_size) as executor:
                 futures = [
                     executor.submit(
                         self.send_chat_request,
-                        [{"role": "user", "content": (
-                            f"{uuid.uuid4().hex}\n"
-                            "This is an independent warmup request. Count from one to one hundred."
-                        )}],
+                        make_messages(),
                         output_length,
                         temperature,
                         str(idx),
@@ -619,7 +646,9 @@ def main():
     parser.add_argument("--tokenizer", default=None, help="HuggingFace tokenizer name for exact counting (optional)")
     parser.add_argument("--rounds", type=int, default=10, help="Number of conversation rounds")
     parser.add_argument("--warmup-rounds", type=int, default=1,
-                        help="正式测试前的独立短请求预热轮数（默认 1，设为 0 关闭，不计入正式统计）")
+                        help="正式测试前的独立请求预热轮数（默认 1，设为 0 关闭，不计入正式统计）")
+    parser.add_argument("--warmup-input-tokens", type=int, default=None,
+                        help="预热 user 内容的目标 token 数，不含聊天模板（需 tokenizer；默认使用原来的短提示词）")
     parser.add_argument("--warmup-wait", type=float, default=10.0,
                         help="预热结束后等待秒数（默认 10，不保证异步 KV cache 已保存完成）")
     parser.add_argument("--initial-tokens", type=int, default=16, help="Token length of the first user message")
@@ -642,6 +671,8 @@ def main():
     args = parser.parse_args()
     if args.warmup_rounds < 0:
         parser.error("--warmup-rounds 必须 >= 0")
+    if args.warmup_input_tokens is not None and args.warmup_input_tokens < 1:
+        parser.error("--warmup-input-tokens 必须 >= 1")
     if not 0 <= args.warmup_wait < float('inf'):
         parser.error("--warmup-wait 必须为有限的非负数")
     if args.batch_size < 1 or (args.max_workers is not None and args.max_workers < 1):
@@ -696,6 +727,7 @@ def main():
             output_length=args.output_len,
             temperature=args.temperature,
             wait_seconds=args.warmup_wait,
+            input_tokens=args.warmup_input_tokens,
         )
     except RuntimeError as exc:
         parser.exit(1, f"{exc}\n")
