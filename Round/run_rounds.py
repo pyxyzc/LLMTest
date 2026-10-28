@@ -473,6 +473,7 @@ class SGLangBatchBenchmark:
                 for idx, result in failed:
                     print(f"    [req {idx}] {result.error or '未收到流式响应'}")
                 raise RuntimeError("预热失败，未开始正式测试")
+        pause = input("等待清洗hbm")
         if wait_seconds:
             print(f"[Warmup] 等待 {wait_seconds:g} 秒后开始正式测试")
             time.sleep(wait_seconds)
@@ -545,7 +546,7 @@ class SGLangBatchBenchmark:
                 temperature=temperature,
                 routing_keys=routing_keys,
             )
-            time.sleep(2)
+            time.sleep(10)
             batch_result.round_num = round_num
             # 每轮单个请求的累积输入 token 数，与 batch_size 无关
             batch_result.total_input_tokens = int(total_input_tokens_list[0])
@@ -584,7 +585,7 @@ class SGLangBatchBenchmark:
 
             time.sleep(0.5)
 
-            pause = input("等待清洗hbm")
+            #pause = input("等待清洗hbm")
 
         # 返回 recorded_messages 以便 main 中保存完整对话
         return results, recorded_messages
