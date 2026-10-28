@@ -29,6 +29,7 @@ import re
 import io
 import os
 import signal
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
@@ -409,6 +410,47 @@ class SGLangBatchBenchmark:
         )
         return batch_result, results
 
+    def warmup(
+        self,
+        rounds: int,
+        batch_size: int,
+        max_workers: Optional[int] = None,
+        output_length: int = 32,
+        temperature: float = 0.0,
+        wait_seconds: float = 10.0,
+    ):
+        """独立短请求预热，不使用正式语料、随机数状态、对话历史或统计。"""
+        if rounds == 0:
+            return
+        print(f"\n[Warmup] 开始预热：{rounds} 轮，每轮 {batch_size} 个请求")
+        for round_idx in range(1, rounds + 1):
+            with ThreadPoolExecutor(max_workers=max_workers or batch_size) as executor:
+                futures = [
+                    executor.submit(
+                        self.send_chat_request,
+                        [{"role": "user", "content": (
+                            f"{uuid.uuid4().hex}\n"
+                            "This is an independent warmup request. Count from one to one hundred."
+                        )}],
+                        output_length,
+                        temperature,
+                        str(idx),
+                    )
+                    for idx in range(batch_size)
+                ]
+                results = [future.result() for future in futures]
+            failed = [(idx, r) for idx, r in enumerate(results)
+                      if not r.success or r.ttft_ms is None]
+            print(f"[Warmup {round_idx}/{rounds}] {batch_size - len(failed)}/{batch_size} 成功")
+            if failed:
+                for idx, result in failed:
+                    print(f"    [req {idx}] {result.error or '未收到流式响应'}")
+                raise RuntimeError("预热失败，未开始正式测试")
+        if wait_seconds:
+            print(f"[Warmup] 等待 {wait_seconds:g} 秒后开始正式测试")
+            time.sleep(wait_seconds)
+        print("[Warmup] 预热完成，开始正式多轮测试（统计从此处开始）\n")
+
     def run_conversation(
         self,
         initial_tokens: int,
@@ -576,6 +618,10 @@ def main():
     parser.add_argument("--model", required=True, help="Model name")
     parser.add_argument("--tokenizer", default=None, help="HuggingFace tokenizer name for exact counting (optional)")
     parser.add_argument("--rounds", type=int, default=10, help="Number of conversation rounds")
+    parser.add_argument("--warmup-rounds", type=int, default=1,
+                        help="正式测试前的独立短请求预热轮数（默认 1，设为 0 关闭，不计入正式统计）")
+    parser.add_argument("--warmup-wait", type=float, default=10.0,
+                        help="预热结束后等待秒数（默认 10，不保证异步 KV cache 已保存完成）")
     parser.add_argument("--initial-tokens", type=int, default=16, help="Token length of the first user message")
     parser.add_argument("--increment-tokens", type=int, default=16000, help="Token length of each subsequent new user message")
     parser.add_argument("--output-len", type=int, default=32, help="Number of tokens to generate per response")
@@ -594,6 +640,12 @@ def main():
                         help="请求 usage chunk 以获取每请求 kvcache 命中数（需服务端 --enable-cache-report 且支持 stream_options；PD 分离走 router 时若报错请关闭此开关）")
 
     args = parser.parse_args()
+    if args.warmup_rounds < 0:
+        parser.error("--warmup-rounds 必须 >= 0")
+    if not 0 <= args.warmup_wait < float('inf'):
+        parser.error("--warmup-wait 必须为有限的非负数")
+    if args.batch_size < 1 or (args.max_workers is not None and args.max_workers < 1):
+        parser.error("--batch-size 和 --max-workers 必须 >= 1")
 
     tokenizer = None
     if args.tokenizer:
@@ -635,6 +687,18 @@ def main():
         _shutdown_conversation_dir = args.conversation_dir
         _shutdown_save_enabled = True
         signal.signal(signal.SIGINT, _signal_handler)
+
+    try:
+        bench.warmup(
+            rounds=args.warmup_rounds,
+            batch_size=args.batch_size,
+            max_workers=args.max_workers,
+            output_length=args.output_len,
+            temperature=args.temperature,
+            wait_seconds=args.warmup_wait,
+        )
+    except RuntimeError as exc:
+        parser.exit(1, f"{exc}\n")
 
     start_total = time.perf_counter()
     results, all_messages = bench.run_conversation(
