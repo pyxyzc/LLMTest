@@ -413,8 +413,6 @@ class SGLangBatchBenchmark:
     def warmup(
         self,
         rounds: int,
-        batch_size: int,
-        max_workers: Optional[int] = None,
         output_length: int = 32,
         temperature: float = 0.0,
         wait_seconds: float = 10.0,
@@ -452,26 +450,15 @@ class SGLangBatchBenchmark:
                 content = warmup_tokenizer.decode(token_ids[:input_tokens], skip_special_tokens=True)
             return [{"role": "user", "content": content}]
 
-        print(f"\n[Warmup] 开始预热：{rounds} 轮，每轮 {batch_size} 个请求")
+        print(f"\n[Warmup] 开始预热：{rounds} 轮，每轮 1 个请求（串行）")
         for round_idx in range(1, rounds + 1):
-            with ThreadPoolExecutor(max_workers=max_workers or batch_size) as executor:
-                futures = [
-                    executor.submit(
-                        self.send_chat_request,
-                        make_messages(),
-                        output_length,
-                        temperature,
-                        str(idx),
-                    )
-                    for idx in range(batch_size)
-                ]
-                results = [future.result() for future in futures]
-            failed = [(idx, r) for idx, r in enumerate(results)
-                      if not r.success or r.ttft_ms is None]
-            print(f"[Warmup {round_idx}/{rounds}] {batch_size - len(failed)}/{batch_size} 成功")
+            result = self.send_chat_request(
+                make_messages(), output_length, temperature, "0"
+            )
+            failed = not result.success or result.ttft_ms is None
+            print(f"[Warmup {round_idx}/{rounds}] {0 if failed else 1}/1 成功")
             if failed:
-                for idx, result in failed:
-                    print(f"    [req {idx}] {result.error or '未收到流式响应'}")
+                print(f"    [req 0] {result.error or '未收到流式响应'}")
                 raise RuntimeError("预热失败，未开始正式测试")
         pause = input("等待清洗hbm")
         if wait_seconds:
@@ -648,8 +635,8 @@ def main():
     parser.add_argument("--rounds", type=int, default=10, help="Number of conversation rounds")
     parser.add_argument("--warmup-rounds", type=int, default=1,
                         help="正式测试前的独立请求预热轮数（默认 1，设为 0 关闭，不计入正式统计）")
-    parser.add_argument("--warmup-input-tokens", type=int, default=None,
-                        help="预热 user 内容的目标 token 数，不含聊天模板（需 tokenizer；默认使用原来的短提示词）")
+    parser.add_argument("--warmup-input-tokens", type=int, default=4096,
+                        help="预热 user 内容的目标 token 数，不含聊天模板（需 tokenizer；默认 4096）")
     parser.add_argument("--warmup-wait", type=float, default=10.0,
                         help="预热结束后等待秒数（默认 10，不保证异步 KV cache 已保存完成）")
     parser.add_argument("--initial-tokens", type=int, default=16, help="Token length of the first user message")
@@ -723,8 +710,6 @@ def main():
     try:
         bench.warmup(
             rounds=args.warmup_rounds,
-            batch_size=args.batch_size,
-            max_workers=args.max_workers,
             output_length=args.output_len,
             temperature=args.temperature,
             wait_seconds=args.warmup_wait,
