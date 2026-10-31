@@ -471,7 +471,11 @@ class SGLangBatchBenchmark:
             # 仅采集第二轮，控制请求不计入 batch 的 TTFT 和吞吐统计。
             profile_url = "http://127.0.0.1:30000"
             if round_num == 2:
-                with self.session.post(f"{profile_url}/start_profile", timeout=300) as resp:
+                with self.session.post(
+                    f"{profile_url}/start_profile",
+                    json={"activities": ["CUDA_PROFILER"]},
+                    timeout=300,
+                ) as resp:
                     resp.raise_for_status()
                 print("[Profile] 第二轮开始前：start_profile 完成")
             try:
