@@ -468,15 +468,27 @@ class SGLangBatchBenchmark:
                     total_input_tokens_list[idx] += self.count_tokens(user_content, kind="INPUT")
                 print()
 
-            batch_result, individual_results = self.run_batch_round(
-                messages_list=all_messages,
-                batch_size=batch_size,
-                max_workers=max_workers,
-                output_length=output_length,
-                temperature=temperature,
-                routing_keys=routing_keys,
-            )
-            time.sleep(2)
+            # 仅采集第二轮，控制请求不计入 batch 的 TTFT 和吞吐统计。
+            profile_url = "http://127.0.0.1:30000"
+            if round_num == 2:
+                with self.session.post(f"{profile_url}/start_profile", timeout=300) as resp:
+                    resp.raise_for_status()
+                print("[Profile] 第二轮开始前：start_profile 完成")
+            try:
+                batch_result, individual_results = self.run_batch_round(
+                    messages_list=all_messages,
+                    batch_size=batch_size,
+                    max_workers=max_workers,
+                    output_length=output_length,
+                    temperature=temperature,
+                    routing_keys=routing_keys,
+                )
+            finally:
+                if round_num == 2:
+                    with self.session.post(f"{profile_url}/stop_profile", timeout=300) as resp:
+                        resp.raise_for_status()
+                    print("[Profile] 第二轮结束后：stop_profile 完成")
+            time.sleep(80)
             batch_result.round_num = round_num
             # 每轮单个请求的累积输入 token 数，与 batch_size 无关
             batch_result.total_input_tokens = int(total_input_tokens_list[0])
@@ -515,7 +527,7 @@ class SGLangBatchBenchmark:
 
             time.sleep(0.5)
 
-            pause = input("等待清洗hbm")
+            #pause = input("等待清洗hbm")
 
         # 返回 recorded_messages 以便 main 中保存完整对话
         return results, recorded_messages
