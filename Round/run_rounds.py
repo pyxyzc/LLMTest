@@ -137,12 +137,13 @@ class SGLangBatchBenchmark:
 
         return res
 
-    def count_tokens(self, text: str, kind: str = "INPUT") -> int:
+    def count_tokens(self, text: str, kind: Optional[str] = "INPUT") -> int:
         if self._tokenizer:
             token_len = len(self._tokenizer.encode(text))
         else:
             token_len = len(text) // 4
-        print(f"[{kind}] {token_len} tokens")
+        if kind is not None:
+            print(f"[{kind}] {token_len} tokens")
 
         return token_len
 
@@ -437,6 +438,7 @@ class SGLangBatchBenchmark:
         # 独立的记录列表，累积所有轮次的 user+assistant（用于 record_response）
         recorded_messages = [[] for _ in range(batch_size)]
         total_input_tokens_list = [0] * batch_size
+        new_input_tokens_list = [0] * batch_size
         # 每个对话一个固定的 routing_key，保证同一对话所有轮次路由到同一 DP rank
         routing_keys = [f"{idx}" for idx in range(batch_size)]
         current_user_len = initial_tokens
@@ -448,8 +450,8 @@ class SGLangBatchBenchmark:
             for idx in range(batch_size):
                 user_content = self._generate_dummy_text(initial_tokens, unique_id=idx)
                 fixed_user_contents.append("summarise the flowing text:" + user_content)
-                total_input_tokens_list[idx] += self.count_tokens(user_content, kind="INPUT")
-            print()
+                new_input_tokens_list[idx] = self.count_tokens(fixed_user_contents[idx], kind=None)
+                total_input_tokens_list[idx] = new_input_tokens_list[idx]
 
         for round_num in range(1, rounds + 1):
             # 为每个请求生成不同的 user message
@@ -465,8 +467,15 @@ class SGLangBatchBenchmark:
                     user_contents.append("summarise the flowing:" + user_content)
                     all_messages[idx].append({"role": "user", "content": user_content})
                     recorded_messages[idx].append({"role": "user", "content": user_content})
-                    total_input_tokens_list[idx] += self.count_tokens(user_content, kind="INPUT")
-                print()
+                    new_input_tokens_list[idx] = self.count_tokens(user_content, kind=None)
+                    total_input_tokens_list[idx] += new_input_tokens_list[idx]
+
+            # 输入包含该用户的历史 user/assistant 消息；本轮回复尚未加入。
+            # 本地累计计数不包含服务端 chat template 的额外开销。
+            for idx in range(batch_size):
+                print(f"[Round {round_num:2d}] [User {idx}] [INPUT] ~{total_input_tokens_list[idx]} tokens "
+                      f"(new user: {new_input_tokens_list[idx]} tokens)")
+            print()
 
             batch_result, individual_results = self.run_batch_round(
                 messages_list=all_messages,
@@ -476,7 +485,6 @@ class SGLangBatchBenchmark:
                 temperature=temperature,
                 routing_keys=routing_keys,
             )
-            time.sleep(2)
             batch_result.round_num = round_num
             # 每轮单个请求的累积输入 token 数，与 batch_size 无关
             batch_result.total_input_tokens = int(total_input_tokens_list[0])
@@ -498,7 +506,8 @@ class SGLangBatchBenchmark:
                             recorded_messages[idx].append({"role": "assistant", "content": res.response})
                             total_input_tokens_list[idx] += res.output_tokens
                 total_input_tokens_dis = sum(total_input_tokens_list)
-                print(f"[Round {round_num:2d}] Success. Total context ~{int(total_input_tokens_dis)} tokens.")
+                print(f"[Round {round_num:2d}] Success. Total context across {batch_size} users "
+                      f"~{int(total_input_tokens_dis)} tokens.")
             else:
                 print(f"[Round {round_num:2d}] CRITICAL: All requests failed. Stopping test.")
                 for idx, res in individual_results:
@@ -513,17 +522,13 @@ class SGLangBatchBenchmark:
                 _shutdown_messages = [list(msgs) for msgs in recorded_messages]
                 save_conversations(recorded_messages, _shutdown_conversation_dir)
 
-            time.sleep(0.5)
-
-            pause = input("等待清洗hbm")
-
         # 返回 recorded_messages 以便 main 中保存完整对话
         return results, recorded_messages
 
     def _print_batch_result(self, result: RoundBatchResult):
         status = f"{result.successful_requests}/{result.batch_size} succ"
         print(f"[Round {result.round_num:2d}] {status} | "
-              f"Total Input: {result.total_input_tokens:6d} tok | "
+              f"Total Input (User 0): ~{result.total_input_tokens:6d} tok | "
               f"Avg TTFT: {result.avg_ttft_ms:8.2f} ms | "
               f"Max TTFT: {result.max_ttft_ms:8.2f} ms | "
               f"Throughput: {result.throughput_rps:6.2f} req/s | "
@@ -671,10 +676,10 @@ def main():
 
     print("\nDetailed Results (per round):")
     print("-" * 100)
-    print(f"{'Round':>6} | {'Total In':>12} | {'Succ/Total':>10} | {'Avg TTFT':>10} | {'Max TTFT':>10} | {'Throughput':>10} | {'Cache Hit':>10} | {'Cached/Prompt':>15}")
+    print(f"{'Round':>6} | {'Input(User 0)':>13} | {'Succ/Total':>10} | {'Avg TTFT':>10} | {'Max TTFT':>10} | {'Throughput':>10} | {'Cache Hit':>10} | {'Cached/Prompt':>15}")
     print("-" * 100)
     for r in results:
-        print(f"{r.round_num:6d} | {r.total_input_tokens:12d} | {r.successful_requests:3d}/{r.batch_size:3d}    | "
+        print(f"{r.round_num:6d} | {r.total_input_tokens:13d} | {r.successful_requests:3d}/{r.batch_size:3d}    | "
               f"{r.avg_ttft_ms:10.2f} | {r.max_ttft_ms:10.2f} | {r.throughput_rps:10.2f} | "
               f"{r.cache_hit_rate*100:9.1f}% | {r.cached_tokens_delta:6d}/{r.total_prompt_tokens_delta:6d}")
     print("-" * 100)
